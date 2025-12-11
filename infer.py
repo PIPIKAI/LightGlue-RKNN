@@ -71,8 +71,9 @@ def infer(
 
     extractor_type = extractor_type.lower()
     if extractor_type == "superpoint":
-        image0 = rgb_to_grayscale(image0)
-        image1 = rgb_to_grayscale(image1)
+        # image0 = rgb_to_grayscale(image0)
+        # image1 = rgb_to_grayscale(image1)
+        pass
     elif extractor_type == "disk":
         pass
     else:

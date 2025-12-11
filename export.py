@@ -169,16 +169,17 @@ def export_onnx(
             input_names=["kpts0", "kpts1", "desc0", "desc1"],
             output_names=["matches0", "matches1", "mscores0", "mscores1"],
             opset_version=16,
-            dynamic_axes={
-                "kpts0": {1: "num_keypoints0"},
-                "kpts1": {1: "num_keypoints1"},
-                "desc0": {1: "num_keypoints0"},
-                "desc1": {1: "num_keypoints1"},
-                "matches0": {1: "num_matches0"},
-                "matches1": {1: "num_matches1"},
-                "mscores0": {1: "num_matches0"},
-                "mscores1": {1: "num_matches1"},
-            },
+            # dynamic_axes={
+            #     "kpts0": {1: "num_keypoints0"},
+            #     "kpts1": {1: "num_keypoints1"},
+            #     "desc0": {1: "num_keypoints0"},
+            #     "desc1": {1: "num_keypoints1"},
+            #     "matches0": {1: "num_matches0"},
+            #     "matches1": {1: "num_matches1"},
+            #     "mscores0": {1: "num_matches0"},
+            #     "mscores1": {1: "num_matches1"},
+            # },
+            dynamic_axes = None
         )
 
 
