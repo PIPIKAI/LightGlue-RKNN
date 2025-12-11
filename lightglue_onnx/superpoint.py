@@ -6,30 +6,7 @@
 #
 #  Unpublished Copyright (c) 2020
 #  Magic Leap, Inc., All Rights Reserved.
-#
-# NOTICE:  All information contained herein is, and remains the property
-# of COMPANY. The intellectual and technical concepts contained herein
-# are proprietary to COMPANY and may be covered by U.S. and Foreign
-# Patents, patents in process, and are protected by trade secret or
-# copyright law.  Dissemination of this information or reproduction of
-# this material is strictly forbidden unless prior written permission is
-# obtained from COMPANY.  Access to the source code contained herein is
-# hereby forbidden to anyone except current COMPANY employees, managers
-# or contractors who have executed Confidentiality and Non-disclosure
-# agreements explicitly covering such access.
-#
-# The copyright notice above does not evidence any actual or intended
-# publication or disclosure  of  this source code, which includes
-# information that is confidential and/or proprietary, and is a trade
-# secret, of  COMPANY.   ANY REPRODUCTION, MODIFICATION, DISTRIBUTION,
-# PUBLIC  PERFORMANCE, OR PUBLIC DISPLAY OF OR THROUGH USE  OF THIS
-# SOURCE CODE  WITHOUT THE EXPRESS WRITTEN CONSENT OF COMPANY IS
-# STRICTLY PROHIBITED, AND IN VIOLATION OF APPLICABLE LAWS AND
-# INTERNATIONAL TREATIES.  THE RECEIPT OR POSSESSION OF  THIS SOURCE
-# CODE AND/OR RELATED INFORMATION DOES NOT CONVEY OR IMPLY ANY RIGHTS
-# TO REPRODUCE, DISCLOSE OR DISTRIBUTE ITS CONTENTS, OR TO MANUFACTURE,
-# USE, OR SELL ANYTHING THAT IT  MAY DESCRIBE, IN WHOLE OR IN PART.
-#
+
 # %COPYRIGHT_END%
 # ----------------------------------------------------------------------
 # %AUTHORS_BEGIN%
@@ -83,24 +60,133 @@ def top_k_keypoints(keypoints, scores, k: int):
     return keypoints[indices], scores
 
 
+# def sample_descriptors(keypoints, descriptors, s: int = 8):
+#     """Interpolate descriptors at keypoint locations"""
+#     b, c, h, w = descriptors.shape
+#     keypoints = keypoints - s / 2 + 0.5
+#     keypoints_x = torch.div(keypoints[..., 0], (w * s - s / 2 - 0.5))
+#     keypoints_y = torch.div(keypoints[..., 1], (h * s - s / 2 - 0.5))
+#     keypoints = torch.stack((keypoints_x, keypoints_y), dim=-1)
+
+#     keypoints = keypoints * 2 - 1  # normalize to (-1, 1)
+#     descriptors = torch.nn.functional.grid_sample(
+#         descriptors, keypoints.view(b, 1, -1, 2), mode="bilinear", align_corners=True
+#     )
+#     descriptors = torch.nn.functional.normalize(
+#         descriptors.reshape(b, c, -1), p=2, dim=1
+#     )
+#     return descriptors
+
 def sample_descriptors(keypoints, descriptors, s: int = 8):
-    """Interpolate descriptors at keypoint locations"""
+    """Interpolate descriptors at keypoint locations using manual bilinear interpolation"""
     b, c, h, w = descriptors.shape
     keypoints = keypoints - s / 2 + 0.5
     keypoints_x = torch.div(keypoints[..., 0], (w * s - s / 2 - 0.5))
     keypoints_y = torch.div(keypoints[..., 1], (h * s - s / 2 - 0.5))
-    keypoints = torch.stack((keypoints_x, keypoints_y), dim=-1)
-
-    keypoints = keypoints * 2 - 1  # normalize to (-1, 1)
-    descriptors = torch.nn.functional.grid_sample(
-        descriptors, keypoints.view(b, 1, -1, 2), mode="bilinear", align_corners=True
+    
+    # 将归一化坐标 [0, 1] 转换为像素坐标 [0, w-1] 和 [0, h-1]
+    x = keypoints_x * (w - 1)
+    y = keypoints_y * (h - 1)
+    
+    # 计算双线性插值的四个邻近点
+    x0 = torch.floor(x).long()
+    x1 = x0 + 1
+    y0 = torch.floor(y).long()
+    y1 = y0 + 1
+    
+    # 边界裁剪
+    x0 = torch.clamp(x0, 0, w - 1)
+    x1 = torch.clamp(x1, 0, w - 1)
+    y0 = torch.clamp(y0, 0, h - 1)
+    y1 = torch.clamp(y1, 0, h - 1)
+    
+    # 计算插值权重
+    wa = (x1.float() - x) * (y1.float() - y)
+    wb = (x1.float() - x) * (y - y0.float())
+    wc = (x - x0.float()) * (y1.float() - y)
+    wd = (x - x0.float()) * (y - y0.float())
+    
+    # 对每个 batch 和每个关键点进行采样
+    n_keypoints = keypoints.shape[1]
+    sampled = torch.zeros(b, c, n_keypoints, device=descriptors.device, dtype=descriptors.dtype)
+    
+    for i in range(b):
+        for j in range(n_keypoints):
+            # 获取四个邻近点的描述符
+            Ia = descriptors[i, :, y0[i, j], x0[i, j]]
+            Ib = descriptors[i, :, y1[i, j], x0[i, j]]
+            Ic = descriptors[i, :, y0[i, j], x1[i, j]]
+            Id = descriptors[i, :, y1[i, j], x1[i, j]]
+            
+            # 双线性插值
+            sampled[i, :, j] = (wa[i, j] * Ia + 
+                                wb[i, j] * Ib + 
+                                wc[i, j] * Ic + 
+                                wd[i, j] * Id)
+    
+    # 归一化
+    descriptors_out = torch.nn.functional.normalize(
+        sampled.reshape(b, c, -1), p=2, dim=1
     )
-    descriptors = torch.nn.functional.normalize(
-        descriptors.reshape(b, c, -1), p=2, dim=1
+    return descriptors_out
+
+
+# 更高效的向量化版本（推荐使用）
+def sample_descriptors_vectorized(keypoints, descriptors, s: int = 8):
+    """Vectorized interpolation - more efficient for RKNN"""
+    b, c, h, w = descriptors.shape
+    # keypoints shape: (N, 2) - 注意没有batch维度
+    n_keypoints = keypoints.shape[0]
+    
+    keypoints = keypoints - s / 2 + 0.5
+    keypoints_x = torch.div(keypoints[..., 0], (w * s - s / 2 - 0.5))
+    keypoints_y = torch.div(keypoints[..., 1], (h * s - s / 2 - 0.5))
+    
+    # 转换为像素坐标 (N,)
+    x = keypoints_x * (w - 1)
+    y = keypoints_y * (h - 1)
+    
+    # 计算邻近点 (N,)
+    x0 = torch.floor(x).long()
+    x1 = x0 + 1
+    y0 = torch.floor(y).long()
+    y1 = y0 + 1
+    
+    # 边界裁剪
+    x0 = torch.clamp(x0, 0, w - 1)
+    x1 = torch.clamp(x1, 0, w - 1)
+    y0 = torch.clamp(y0, 0, h - 1)
+    y1 = torch.clamp(y1, 0, h - 1)
+    
+    # 计算插值权重 (N,) -> (1, 1, N) for broadcasting
+    wa = ((x1.float() - x) * (y1.float() - y)).view(1, 1, n_keypoints)
+    wb = ((x1.float() - x) * (y - y0.float())).view(1, 1, n_keypoints)
+    wc = ((x - x0.float()) * (y1.float() - y)).view(1, 1, n_keypoints)
+    wd = ((x - x0.float()) * (y - y0.float())).view(1, 1, n_keypoints)
+    
+    # 批量索引采样 - reshape descriptors 为 (b, c, h*w)
+    descriptors_flat = descriptors.reshape(b, c, h * w)
+    
+    # 计算索引 (N,) -> (1, 1, N) -> (b, c, N)
+    idx_a = (y0 * w + x0).view(1, 1, n_keypoints).expand(b, c, n_keypoints)
+    idx_b = (y1 * w + x0).view(1, 1, n_keypoints).expand(b, c, n_keypoints)
+    idx_c = (y0 * w + x1).view(1, 1, n_keypoints).expand(b, c, n_keypoints)
+    idx_d = (y1 * w + x1).view(1, 1, n_keypoints).expand(b, c, n_keypoints)
+    
+    # 使用 gather 进行采样
+    Ia = torch.gather(descriptors_flat, 2, idx_a)  # (b, c, n_keypoints)
+    Ib = torch.gather(descriptors_flat, 2, idx_b)
+    Ic = torch.gather(descriptors_flat, 2, idx_c)
+    Id = torch.gather(descriptors_flat, 2, idx_d)
+    
+    # 双线性插值 (b, c, N)
+    sampled = wa * Ia + wb * Ib + wc * Ic + wd * Id
+    
+    # 归一化
+    descriptors_out = torch.nn.functional.normalize(
+        sampled, p=2, dim=1
     )
-    return descriptors
-
-
+    return descriptors_out
 
 def unravel_indices(
     indices: torch.LongTensor,
@@ -160,7 +246,7 @@ class SuperPoint(nn.Module):
         "remove_borders": 4,
     }
 
-    def __init__(self, **conf):
+    def __init__(self, conf):
         super().__init__()
         self.config = {**self.default_config, **conf}
 
@@ -188,9 +274,9 @@ class SuperPoint(nn.Module):
         url = "https://github.com/cvg/LightGlue/releases/download/v0.1_arxiv/superpoint_v1.pth"
         self.load_state_dict(torch.hub.load_state_dict_from_url(url))
 
-        mk = self.config["max_num_keypoints"]
-        if mk == 0 or mk < -1:
-            raise ValueError('"max_num_keypoints" must be positive or "-1"')
+        # mk = self.config["max_num_keypoints"]
+        # if mk == 0 or mk < -1:
+        #     raise ValueError('"max_num_keypoints" must be positive or "-1"')
 
         print("Loaded SuperPoint model")
 
@@ -236,7 +322,9 @@ class SuperPoint(nn.Module):
         # total_elements * 0.00025 / 10
         # total_elements_floor = torch.floor(total_elements * 0.00025 / 10)
         # top_nums = (total_elements_floor * 10).to(torch.int32)
-        top_nums = 20
+        top_nums = self.config["top_nums"]
+        # top_nums = 256
+        print(f'@@@@@@@@@@@@@@@@@@@@@@@@ top_nums: {top_nums}')
         values, indices = flat_scores.topk(top_nums)
         keypoints = torch.stack(unravel_index(indices, scores.shape))
         keypoints_t = keypoints.T
@@ -278,7 +366,7 @@ class SuperPoint(nn.Module):
         descriptors = torch.nn.functional.normalize(descriptors, p=2, dim=1)
 
         # Extract descriptors
-        descriptors = sample_descriptors(keypoints, descriptors, 8).permute(0, 2, 1)
+        descriptors = sample_descriptors_vectorized(keypoints, descriptors, 8).permute(0, 2, 1)
 
         # Insert artificial batch dimension
         return (

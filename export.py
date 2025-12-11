@@ -1,7 +1,7 @@
 import argparse
 
 import torch
-
+import os
 from lightglue_onnx import DISK, LightGlue, LightGlueEnd2End, SuperPoint
 from lightglue_onnx.end2end import normalize_keypoints
 from lightglue_onnx.ops import patch_disk_convolution_mode
@@ -18,6 +18,13 @@ def parse_args() -> argparse.Namespace:
         required=False,
         help="Sample image size for ONNX tracing. If a single integer is given, resize the longer side of the image to this value. Otherwise, please provide two integers (height width).",
     )
+    
+    parser.add_argument(
+        "--top_nums",
+        type=int,
+        default=20,
+        required=False
+    )
     parser.add_argument(
         "--extractor_type",
         type=str,
@@ -25,20 +32,7 @@ def parse_args() -> argparse.Namespace:
         required=False,
         help="Type of feature extractor. Supported extractors are 'superpoint' and 'disk'. Defaults to 'superpoint'.",
     )
-    parser.add_argument(
-        "--extractor_path",
-        type=str,
-        default=None,
-        required=False,
-        help="Path to save the feature extractor ONNX model.",
-    )
-    parser.add_argument(
-        "--lightglue_path",
-        type=str,
-        default=None,
-        required=False,
-        help="Path to save the LightGlue ONNX model.",
-    )
+
     parser.add_argument(
         "--end2end",
         action="store_true",
@@ -47,33 +41,98 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dynamic", action="store_true", help="Whether to allow dynamic image sizes."
     )
+    parser.add_argument(
+        "--simplify", action="store_true", help="Whether to simplify."
+    )
+    
+    # parser.add_argument(
+    #     "--rknn", action="store_true", help="conver to rknn."
+    # )
     return parser.parse_args()
 
 
+
+def simplify_model(model_path:str):
+    import onnx
+    from onnxsim import simplify
+    model = onnx.load(model_path + ".onnx")
+    model_simp, check = simplify(model=model)
+    assert check, "Simplified ONNX model could not be validated"
+    s_path = f"{model_path}_simplified.onnx"
+    onnx.save(model_simp, s_path)
+    return s_path
+
+
+def exort_rknn(input_size_list , input_model_path , output_dir, exp ="" ,img_size = 512 , top_nums = 20,platform = "rk3588", verbose=True):
+    from rknn.api import RKNN
+    rknn = RKNN(verbose=verbose)
+    print('--> Config model')
+    rknn.config(
+        target_platform='rk3588',
+        optimization_level=3,
+        disable_rules=['fuse_two_scatternd2'],  # 禁用这个融合规则
+    )
+    print('done')
+    
+    print('--> Loading model')
+    ret = rknn.load_onnx(
+        model=input_model_path,
+        input_size_list = input_size_list
+    )
+    if ret != 0:
+        print('Load model failed!')
+        exit(ret)
+    print('done')
+    
+    # Build model
+    print('--> Building model')
+    ret = rknn.build(do_quantization=False)
+    if ret != 0:
+        print('Build model failed!')
+        exit(ret)
+    print('done')
+    
+    if not os.path.exists(output_dir):
+        os.mkdir(output_dir)
+    # Export rknn model
+    RKNN_MODEL_PATH = f'./{output_dir}/{exp}_{img_size}_{top_nums}_{platform}.rknn'
+    
+    print('--> Export RKNN model: {}'.format(RKNN_MODEL_PATH))
+    ret = rknn.export_rknn(RKNN_MODEL_PATH)
+    if ret != 0:
+        print('Export rknn model failed!')
+        exit(ret)
+    rknn.release()
+    print('done')
+
+    
 def export_onnx(
     img_size=512,
+    top_nums = 20,
     extractor_type="superpoint",
-    extractor_path=None,
-    lightglue_path=None,
     img0_path="assets/sacre_coeur1.jpg",
     img1_path="assets/sacre_coeur2.jpg",
     end2end=False,
     dynamic=False,
+    simplify=True,
+    output_path=None,
+    onnx_extractor_path = None,
+    onnx_lightglue_path = None
 ):
     # Handle args
-    if extractor_path is not None and end2end:
-        raise ValueError(
-            "Extractor will be combined with LightGlue when exporting end-to-end model."
-        )
-    if extractor_path is None:
-        extractor_path = f"weights/{extractor_type}.onnx"
 
-    if lightglue_path is None:
-        if end2end:
-            lightglue_path = f"weights/{extractor_type}_lightglue_end2end.onnx"
-        else:
-            lightglue_path = f"weights/{extractor_type}_lightglue.onnx"
+    if output_path is None:
+        output_path = "output/onnx"
+        
+    onnx_extractor_path = f"{output_path}/{extractor_type}"
+    if end2end:
+        onnx_lightglue_path = f"{output_path}/{extractor_type}_lightglue_end2end"
+    else:
+        onnx_lightglue_path = f"{output_path}/{extractor_type}_lightglue"
 
+    
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
     # Sample images for tracing
     image0, scales0 = load_image(img0_path, resize=img_size)
     image1, scales1 = load_image(img1_path, resize=img_size)
@@ -84,7 +143,7 @@ def export_onnx(
         # SuperPoint works on grayscale images.
         # image0 = rgb_to_grayscale(image0)
         # image1 = rgb_to_grayscale(image1)
-        extractor = SuperPoint().eval()
+        extractor = SuperPoint({"top_nums":top_nums}).eval()
         lightglue = LightGlue(extractor_type).eval()
     elif extractor_type == "disk":
         extractor = DISK().eval()
@@ -117,7 +176,7 @@ def export_onnx(
         torch.onnx.export(
             pipeline,
             (image0[None], image1[None]),
-            lightglue_path,
+            onnx_lightglue_path + ".onnx",
             input_names=["image0", "image1"],
             output_names=[
                 "kpts0",
@@ -128,7 +187,8 @@ def export_onnx(
                 "mscores1",
             ],
             opset_version=16,
-            dynamic_axes=dynamic_axes,
+            dynamic_axes=None,
+            # dynamic_axes=dynamic_axes,
         )
     else:
         # Export Extractor
@@ -142,11 +202,12 @@ def export_onnx(
         torch.onnx.export(
             extractor,
             image0[None],
-            extractor_path,
+            onnx_extractor_path + ".onnx",
             input_names=["image"],
             output_names=["keypoints", "scores", "descriptors"],
             opset_version=16,
-            dynamic_axes=dynamic_axes,
+            dynamic_axes=None,
+            # dynamic_axes=dynamic_axes,
         )
 
         # Export LightGlue
@@ -157,6 +218,16 @@ def export_onnx(
         kpts0 = normalize_keypoints(kpts0, image0.shape[1], image0.shape[2])
         kpts1 = normalize_keypoints(kpts1, image1.shape[1], image1.shape[2])
 
+        kpts0 = kpts0.unsqueeze(-1)
+        kpts1 = kpts1.unsqueeze(-1)
+        desc0 = desc0.unsqueeze(-1)
+        desc1 = desc1.unsqueeze(-1)
+        
+        
+        print("kpts0 shape:", kpts0.shape)
+        print("desc0 shape:", desc0.shape)
+        
+
         torch.onnx.export(
             lightglue,
             (
@@ -165,9 +236,9 @@ def export_onnx(
                 desc0,
                 desc1,
             ),
-            lightglue_path,
+            onnx_lightglue_path + ".onnx",
             input_names=["kpts0", "kpts1", "desc0", "desc1"],
-            output_names=["matches0", "matches1", "mscores0", "mscores1"],
+            output_names=["scores"],
             opset_version=16,
             # dynamic_axes={
             #     "kpts0": {1: "num_keypoints0"},
@@ -179,10 +250,14 @@ def export_onnx(
             #     "mscores0": {1: "num_matches0"},
             #     "mscores1": {1: "num_matches1"},
             # },
-            dynamic_axes = None
+            dynamic_axes=None,
         )
-
-
+        if simplify :
+            print(">>>>> 开始简化模型 <<<<<")
+            if not end2end:
+                onnx_extractor_simplify_path = simplify_model(onnx_extractor_path)
+            onnx_lightglue_simplify_path = simplify_model(onnx_lightglue_path)
+            
 if __name__ == "__main__":
     args = parse_args()
     export_onnx(**vars(args))

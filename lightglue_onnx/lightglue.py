@@ -1,7 +1,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Callable, List, Optional
-
+import math
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -63,14 +63,21 @@ class FastAttention(nn.Module):
         super().__init__()
         self.s = dim**-0.5
 
-    def forward(self, q, k, v) -> torch.Tensor:
-        if hasattr(F, "scaled_dot_product_attention"):  # hasattr(F, "scaled_dot_product_attention"):
-            q, k, v = [x.contiguous() for x in [q, k, v]]
-            return F.scaled_dot_product_attention(q, k, v)
-        else:
-            s = self.s
-            attn = F.softmax(torch.einsum("...id,...jd->...ij", q, k) * s, -1)
-            return torch.einsum("...ij,...jd->...id", attn, v)
+    def forward(self, q, k, v):
+        q = q.contiguous()
+        k = k.contiguous()
+        v = v.contiguous()
+
+        d = q.shape[-1]
+        scale = d ** 0.5
+
+        attn = torch.softmax(
+            (q @ k.transpose(-2, -1)) / scale,
+            dim=-1
+        )
+
+        return attn @ v
+
 
 
 class FlashAttention(nn.Module):
@@ -165,11 +172,14 @@ class CrossTransformer(nn.Module):
             m1 = self.flash(qk1, qk0, v0)
         else:
             qk0, qk1 = qk0 * self.scale**0.5, qk1 * self.scale**0.5
-            sim = torch.einsum("b h i d, b h j d -> b h i j", qk0, qk1)
+            # sim = torch.einsum("b h i d, b h j d -> b h i j", qk0, qk1)
+            sim = torch.matmul(qk0, qk1.transpose(-2, -1))
             attn01 = F.softmax(sim, dim=-1)
             attn10 = F.softmax(sim.transpose(-2, -1).contiguous(), dim=-1)
-            m0 = torch.einsum("bhij, bhjd -> bhid", attn01, v1)
-            m1 = torch.einsum("bhji, bhjd -> bhid", attn10.transpose(-2, -1), v0)
+            # m0 = torch.einsum("bhij, bhjd -> bhid", attn01, v1)
+            # m1 = torch.einsum("bhji, bhjd -> bhid", attn10.transpose(-2, -1), v0)
+            m0 = torch.matmul(attn01, v1)
+            m1 = torch.matmul(attn10, v0)
         m0, m1 = self.map_(lambda t: rearrange(t, "b h n d -> b n (h d)"), m0, m1)
         m0, m1 = self.map_(self.to_out, m0, m1)
         x0 = x0 + self.ffn(torch.cat([x0, m0], -1))
@@ -204,7 +214,8 @@ class MatchAssignment(nn.Module):
         mdesc0, mdesc1 = self.final_proj(desc0), self.final_proj(desc1)
         _, _, d = mdesc0.shape
         mdesc0, mdesc1 = mdesc0 / d**0.25, mdesc1 / d**0.25
-        sim = torch.einsum("bmd,bnd->bmn", mdesc0, mdesc1)
+        # sim = torch.einsum("bmd,bnd->bmn", mdesc0, mdesc1)
+        sim = torch.matmul(mdesc0, mdesc1.transpose(-2, -1))
         z0 = self.matchability(desc0)
         z1 = self.matchability(desc1)
         scores = sigmoid_log_double_softmax(sim, z0, z1)
@@ -290,6 +301,12 @@ class LightGlue(nn.Module):
         desc0: torch.Tensor,
         desc1: torch.Tensor,
     ):
+        
+        kpts0 = kpts0.squeeze(-1)
+        kpts1 = kpts1.squeeze(-1)
+        desc0 = desc0.squeeze(-1)
+        desc1 = desc1.squeeze(-1)
+        
         b, m, _ = kpts0.shape
         b, n, _ = kpts1.shape
 
@@ -346,11 +363,13 @@ class LightGlue(nn.Module):
         else:
             scores, _ = self.log_assignment[i](desc0, desc1)
 
-        m0, m1, mscores0, mscores1 = self.filter_matches(
-            scores, self.conf.filter_threshold
-        )
+        # m0, m1, mscores0, mscores1 = self.filter_matches(
+        #     scores, self.conf.filter_threshold
+        # )
 
-        return m0, m1, mscores0, mscores1
+        # return m0, m1, mscores0, mscores1
+    
+        return scores
 
     def normalize_keypoints(
         self,

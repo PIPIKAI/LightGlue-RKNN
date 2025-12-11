@@ -44,19 +44,43 @@ class LightGlueRunner:
             kpts0, scores0, desc0 = self.extractor.run(None, {"image": image0})
             kpts1, scores1, desc1 = self.extractor.run(None, {"image": image1})
 
+            kpts0 = self.normalize_keypoints(
+                        kpts0, image0.shape[2], image0.shape[3]
+                    ) 
+            kpts1 = self.normalize_keypoints(
+                        kpts1, image0.shape[2], image0.shape[3]
+                    ) 
+            
+            kpts0 = np.expand_dims(kpts0, axis=-1)
+            kpts1 = np.expand_dims(kpts1, axis=-1)
+            desc0 = np.expand_dims(desc0, axis=-1)
+            desc1 = np.expand_dims(desc1, axis=-1)
+            
+            print("kpts0 shape:", kpts0.shape)
+            print("kpts0 min/max:", kpts0.min(), kpts0.max())
+            print("kpts1 shape:", kpts1.shape)
+            print("kpts1 min/max:", kpts1.min(), kpts1.max())
+            print("desc0 shape:", desc0.shape)
+            print("desc0 min/max:", desc0.min(), desc0.max())
+            print("desc1 shape:", desc1.shape)
+            print("desc1 min/max:", desc1.min(), desc1.max())
+            print("scores0 range:", scores0.min(), scores0.max())
+            print("scores1 range:", scores1.min(), scores1.max())
+
+
             matches0, matches1, mscores0, mscores1 = self.lightglue.run(
                 None,
                 {
-                    "kpts0": self.normalize_keypoints(
-                        kpts0, image0.shape[2], image0.shape[3]
-                    ),
-                    "kpts1": self.normalize_keypoints(
-                        kpts1, image1.shape[2], image1.shape[3]
-                    ),
-                    "desc0": desc0,
-                    "desc1": desc1,
+                    "kpts0": kpts0,
+                    "kpts1": kpts1,
+                    "desc0": desc0 ,
+                    "desc1": desc1 ,
                 },
             )
+            
+            print("LightGlue matches0 range:",matches0.min(), matches0.max(), "mscores0 range:", mscores0.min(), mscores0.max())
+            print("LightGlue matches1 range:",matches1.min(), matches1.max(), "mscores1 range:", mscores1.min(), mscores1.max())
+            
             m_kpts0, m_kpts1 = self.post_process(
                 kpts0, kpts1, matches0, scales0, scales1
             )
