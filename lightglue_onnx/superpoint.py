@@ -286,7 +286,7 @@ class SuperPoint(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Compute keypoints, scores, descriptors for image"""
         # Shared Encoder
-        image = rgb_to_grayscale(image)
+        # image = rgb_to_grayscale(image)
         x = self.relu(self.conv1a(image))
         x = self.relu(self.conv1b(x))
         x = self.pool(x)
@@ -305,23 +305,10 @@ class SuperPoint(nn.Module):
         scores = torch.nn.functional.softmax(scores, 1)[:, :-1]
         b, _, h, w = scores.shape
         scores = scores.permute(0, 2, 3, 1).reshape(b, h, w, 8, 8)
-        # scores = scores.permute(0, 1, 3, 2, 4).reshape(b, h * 8, w * 8)
         scores = scores.permute(0, 1, 3, 2, 4).reshape(b, 1, h * 8, w * 8)
         scores = simple_nms(scores, self.config["nms_radius"])
-
-        # scores.shape == (B, H, W)
-
-        # Below this, B > 1 is not supported as each image can have a different number of keypoints.
-
-        # Extract keypoints
-        # keypoints = torch.nonzero(scores > self.config["detection_threshold"])
-
         ############################################################################
         flat_scores = scores.view(-1)
-        # total_elements = torch.prod(torch.tensor(scores.shape))
-        # total_elements * 0.00025 / 10
-        # total_elements_floor = torch.floor(total_elements * 0.00025 / 10)
-        # top_nums = (total_elements_floor * 10).to(torch.int32)
         top_nums = self.config["top_nums"]
         # top_nums = 256
         print(f'@@@@@@@@@@@@@@@@@@@@@@@@ top_nums: {top_nums}')
@@ -331,34 +318,12 @@ class SuperPoint(nn.Module):
         ############################################################################
         print(f'@@@@@@@@@@@@@@@@@@@@@@@@ top_nums: {top_nums}')
         print(f'@@@@@@@@@@@@@@@@@@@@@@@@ keypoints_t.shape: {keypoints_t.shape}')
-        # keypoints.shape == (N, 3)
 
         # scores = scores[keypoints.T[0], keypoints.T[1], keypoints.T[2]]
         scores = scores[keypoints_t[0], keypoints_t[1], keypoints_t[2]]
 
-        # scores.shape == (N,)
-
-        # Discard keypoints near the image borders
-        # keypoints, scores = remove_borders(
-        #     keypoints, scores, self.config["remove_borders"], h * 8, w * 8
-        # )
-        #
-        # To generate a shape-invariant tensor, the NonZero implementation is cut out of the model.
-        if False:
-            keypoints, scores = remove_borders(
-                keypoints, scores, self.config["remove_borders"], h * 8, w * 8
-            )
-
-        # Keep the k keypoints with highest score
-        if False:  # self.config["max_num_keypoints"] >= 0:
-            keypoints, scores = top_k_keypoints(
-                keypoints, scores, self.config["max_num_keypoints"]
-            )
-
         # Convert (h, w) to (x, y)
         keypoints = torch.flip(keypoints[:, 1:], (1,))
-
-        # keypoints.shape == (N, 2)
 
         # Compute the dense descriptors
         cDa = self.relu(self.convDa(x))

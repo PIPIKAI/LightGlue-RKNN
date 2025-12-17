@@ -29,7 +29,7 @@ class LightGlueEnd2End(torch.nn.Module):
 
         # kpts.shape == (1, N, 2), desc.shape == (1, N, desc_dim)
 
-        matches0, matches1, mscores0, mscores1 = self.lightglue(
+        scores = self.lightglue(
             normalize_keypoints(kpts0, h0, w0),
             normalize_keypoints(kpts1, h1, w1),
             desc0,
@@ -38,7 +38,7 @@ class LightGlueEnd2End(torch.nn.Module):
 
         # matches.shape == (1, N) == mscores.shape
 
-        return kpts0, kpts1, matches0, matches1, mscores0, mscores1
+        return kpts0, kpts1, scores
 
 
 def normalize_keypoints(

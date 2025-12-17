@@ -68,8 +68,14 @@ def load_image(
     return normalize_image(img)[None].astype(np.float32), np.asarray(scales)
 
 
-def rgb_to_grayscale(image: np.ndarray) -> np.ndarray:
-    """Convert an RGB image to grayscale."""
-    scale = np.array([0.299, 0.587, 0.114], dtype=image.dtype).reshape(3, 1, 1)
-    image = (image * scale).sum(axis=-3, keepdims=True)
-    return image
+import torch
+def rgb_to_grayscale(image):
+    """Convert RGB image to grayscale. Supports both torch.Tensor and numpy.ndarray."""
+    if isinstance(image, torch.Tensor):
+        # PyTorch: (C, H, W) or (B, C, H, W)
+        scale = image.new_tensor([0.299, 0.587, 0.114]).view(3, 1, 1)
+        return (image * scale).sum(-3, keepdim=True)
+    else:
+        # NumPy: (H, W, C)
+        scale = np.array([0.299, 0.587, 0.114])
+        return (image * scale).sum(axis=-1, keepdims=True)

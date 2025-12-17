@@ -141,8 +141,8 @@ def export_onnx(
     extractor_type = extractor_type.lower()
     if extractor_type == "superpoint":
         # SuperPoint works on grayscale images.
-        # image0 = rgb_to_grayscale(image0)
-        # image1 = rgb_to_grayscale(image1)
+        image0 = rgb_to_grayscale(image0)
+        image1 = rgb_to_grayscale(image1)
         extractor = SuperPoint({"top_nums":top_nums}).eval()
         lightglue = LightGlue(extractor_type).eval()
     elif extractor_type == "disk":
@@ -178,14 +178,7 @@ def export_onnx(
             (image0[None], image1[None]),
             onnx_lightglue_path + ".onnx",
             input_names=["image0", "image1"],
-            output_names=[
-                "kpts0",
-                "kpts1",
-                "matches0",
-                "matches1",
-                "mscores0",
-                "mscores1",
-            ],
+            output_names=["kpts0", "kpts1","scores"],
             opset_version=16,
             dynamic_axes=None,
             # dynamic_axes=dynamic_axes,
@@ -218,10 +211,10 @@ def export_onnx(
         kpts0 = normalize_keypoints(kpts0, image0.shape[1], image0.shape[2])
         kpts1 = normalize_keypoints(kpts1, image1.shape[1], image1.shape[2])
 
-        kpts0 = kpts0.unsqueeze(-1)
-        kpts1 = kpts1.unsqueeze(-1)
-        desc0 = desc0.unsqueeze(-1)
-        desc1 = desc1.unsqueeze(-1)
+        # kpts0 = kpts0.unsqueeze(-1)
+        # kpts1 = kpts1.unsqueeze(-1)
+        # desc0 = desc0.unsqueeze(-1)
+        # desc1 = desc1.unsqueeze(-1)
         
         
         print("kpts0 shape:", kpts0.shape)

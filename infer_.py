@@ -14,42 +14,56 @@ from rknn.api import RKNN
 
 def letterbox_resize(image, size, bg_color):
     """
-    letterbox_resize the image according to the specified size
-    :param image: input image, which can be a NumPy array or file path
-    :param size: target size (width, height)
-    :param bg_color: background filling data 
-    :return: processed image
+    Letterbox resize: 支持灰度(1通道) / RGB(3通道) / RGBA(4通道)
     """
     if isinstance(image, str):
         image = cv2.imread(image)
 
     target_width, target_height = size
-    image_height, image_width, _ = image.shape
 
-    # Calculate the adjusted image size
-    aspect_ratio = min(target_width / image_width, target_height / image_height)
-    new_width = int(image_width * aspect_ratio)
-    new_height = int(image_height * aspect_ratio)
+    # 判断输入图像通道
+    if image.ndim == 2:
+        h, w = image.shape
+        c = 1
+    else:
+        h, w, c = image.shape
 
-    # Use cv2.resize() for proportional scaling
-    image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
+    # 缩放比例
+    ar = min(target_width / w, target_height / h)
+    new_w = int(w * ar)
+    new_h = int(h * ar)
 
-    # Create a new canvas and fill it
-    result_image = np.ones((target_height, target_width, 3), dtype=np.uint8) * bg_color
-    offset_x = (target_width - new_width) // 2
-    offset_y = (target_height - new_height) // 2
-    result_image[offset_y:offset_y + new_height, offset_x:offset_x + new_width] = image
-    return result_image, aspect_ratio, offset_x, offset_y
+    # resize
+    resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    # 创建背景画布（根据通道数来创建）
+    if c == 1:
+        canvas = np.ones((target_height, target_width), dtype=np.uint8) * bg_color
+    else:
+        canvas = np.ones((target_height, target_width, c), dtype=np.uint8) * bg_color
+
+    # 计算偏移
+    ox = (target_width - new_w) // 2
+    oy = (target_height - new_h) // 2
+
+    # 贴图
+    if c == 1:
+        canvas[oy:oy+new_h, ox:ox+new_w] = resized
+    else:
+        canvas[oy:oy+new_h, ox:ox+new_w, :] = resized
+
+    return canvas, ar, ox, oy
 
 
-superpoint_model_path = "output/rknn/superpoint_512_256_rk3588.rknn"
+superpoint_model_path = "output/rknn/superpoint_simplified_512_512_rk3588.rknn"
 # lightglue_model_path = "output/rknn/lightglue_512_256_rk3588.rknn"
-lightglue_model_path = "output/rknn/lightglue_512_256_rk3588.rknn"
+lightglue_model_path = "output/rknn/lightglue_simplified_512_512_rk3588.rknn"
 
 target = "rk3588"
 
 superpoint_model = RKNN(verbose=True)
 lightglue_model = RKNN(verbose=True)
+GrayScale = True
 
 # -------------------------
 # 1. 加载模型
@@ -83,24 +97,42 @@ print('Runtime initialized')
 # -------------------------
 # 3. 图像预处理
 # -------------------------
-img1 = cv2.imread('./assets/sacre_coeur1.jpg')
-img2 = cv2.imread('./assets/sacre_coeur2.jpg')
+# img1 = cv2.imread('./assets/sacre_coeur1.jpg')
+# img2 = cv2.imread('./assets/sacre_coeur2.jpg')
+img1 = cv2.imread('./assets/DSC_0410.JPG')
+img2 = cv2.imread('./assets/DSC_0411.JPG')
 
-# img1 = cv2.imread('./assets/DSC_0410.JPG')
-# img2 = cv2.imread('./assets/DSC_0411.JPG')
-
-letterbox_img1, ar1, ox1, oy1 = letterbox_resize(img1, (512,512), 114)
-letterbox_img2, ar2, ox2, oy2 = letterbox_resize(img2, (512,512), 114)
-
-infer_img1 = (letterbox_img1[..., ::-1] / 255.0).astype(np.float16).copy()  # BGR->RGB
-infer_img2 = (letterbox_img2[..., ::-1] / 255.0).astype(np.float16).copy()  # BGR->RGB
+if GrayScale:
+    img1_input = rgb_to_grayscale(img1)
+    img2_input = rgb_to_grayscale(img2)
+else:
+    img1_input = img1
+    img2_input = img2
 
 
+letterbox_img1, ar1, ox1, oy1 = letterbox_resize(img1_input, (512,512), 114)
+letterbox_img2, ar2, ox2, oy2 = letterbox_resize(img2_input, (512,512), 114)
+
+# infer_img1 = (letterbox_img1[..., ::-1] / 255.0).astype(np.float16).copy()  # BGR->RGB
+# infer_img2 = (letterbox_img2[..., ::-1] / 255.0).astype(np.float16).copy()  # BGR->RGB
+if GrayScale:
+
+    infer_img1 = (letterbox_img1 / 255.0).astype(np.float16).copy()
+    infer_img2 = (letterbox_img2 / 255.0).astype(np.float16).copy()
+else:
+    infer_img1 = (letterbox_img1[..., ::-1] / 255.0).astype(np.float16).copy()  # BGR->RGB
+    infer_img2 = (letterbox_img2[..., ::-1] / 255.0).astype(np.float16).copy()  # BGR->RGB
+print("infer_img1 shape:" ,infer_img1.shape)
 # -------------------------
 # 4. SuperPoint 推理
 # -------------------------
+star_infer = time.perf_counter()
 outputs1 = superpoint_model.inference(inputs=[infer_img1])
+print(f"img1 superpoint_model 耗时: {time.perf_counter() - star_infer:.6f} 秒")
+
+star_infer = time.perf_counter()
 outputs2 = superpoint_model.inference(inputs=[infer_img2])
+print(f"img2 superpoint_model 耗时: {time.perf_counter() - star_infer:.6f} 秒")
 
 kpts0 = outputs1[0][0]   # shape (256,2)
 scores0 = outputs1[1][0]
@@ -127,26 +159,10 @@ def normalize_keypoints(
 # -------------------------
 # 5. LightGlue 推理
 # -------------------------
-# LightGlue 输入：kpts0,kpts1,desc0,desc1
-# lg_inputs = {
-#     'kpts0': kpts0.astype(np.int64),
-#     'kpts1': kpts1.astype(np.int64),
-#     'desc0': desc0.astype(np.float16),
-#     'desc1': desc1.astype(np.float16)
-# }
-
 
 kpts0 = normalize_keypoints(kpts0 , 512,512)
 kpts1 = normalize_keypoints(kpts1 , 512,512)
 
-
-# kpts: (256,2) -> (1,2,1,256)
-kpts0 = kpts0.T.reshape(1, 2, 1, 256).astype(np.float16)
-kpts1 = kpts1.T.reshape(1, 2, 1, 256).astype(np.float16)
-
-# desc: (256,256) -> (1,256,1,256)
-desc0 = desc0.T.reshape(1, 256, 1, 256).astype(np.float16)
-desc1 = desc1.T.reshape(1, 256, 1, 256).astype(np.float16)
 
 print("kpts0 shape:", kpts0.shape)
 print("kpts0 min/max:", kpts0.min(), kpts0.max())
@@ -170,12 +186,6 @@ def post_process( kpts0, kpts1, matches0, scales0, scales1):
     return m_kpts0, m_kpts1
 
 
-# lg_inputs = [kpts0_rknn, kpts1_rknn, desc0_rknn, desc1_rknn]
-# kpts0 = np.expand_dims(kpts0, axis=0)  # shape: (1, 256, 2)
-# kpts1 = np.expand_dims(kpts1, axis=0)
-# desc0 = np.expand_dims(desc0, axis=0)
-# desc1 = np.expand_dims(desc1, axis=0)
-
 lg_inputs = [
 kpts0.astype(np.float32),  # (1, 256, 2)
 kpts1.astype(np.float32),  # (1, 256, 2)
@@ -184,11 +194,12 @@ desc1.astype(np.float32)  # (1, 256, 256)
 ]
 
 print("lightglue_model infer begin ")
+star_infer = time.perf_counter()
 
 lg_outputs = lightglue_model.inference(inputs=lg_inputs)
 print("lightglue_model infer end !")
+print(f"lightglue_model 耗时: {time.perf_counter() - star_infer:.6f} 秒")
 
-print("lightglue_model infer end !")
 
 # lg_outputs[0] -> (1,257,257) FP16
 scores = lg_outputs[0][0].astype(np.float32)  # (257,257)
@@ -300,9 +311,9 @@ def kpts_normalized_to_original(kpts_norm, scale, offset_x, offset_y):
 
 # 转回原图坐标
 kpts0_plot = kpts_normalized_to_original(
-    kpts0.squeeze(axis=0).squeeze(axis=1).T, ar1, ox1, oy1)
+    kpts0, ar1, ox1, oy1)
 kpts1_plot = kpts_normalized_to_original(
-    kpts1.squeeze(axis=0).squeeze(axis=1).T, ar2, ox2, oy2)
+    kpts1, ar2, ox2, oy2)
 
 # 保留有效匹配
 pairs = [(i,j) for i,j in enumerate(final_match0) if j >= 0]

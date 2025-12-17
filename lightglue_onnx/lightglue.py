@@ -302,10 +302,10 @@ class LightGlue(nn.Module):
         desc1: torch.Tensor,
     ):
         
-        kpts0 = kpts0.squeeze(-1)
-        kpts1 = kpts1.squeeze(-1)
-        desc0 = desc0.squeeze(-1)
-        desc1 = desc1.squeeze(-1)
+        # kpts0 = kpts0.squeeze(-1)
+        # kpts1 = kpts1.squeeze(-1)
+        # desc0 = desc0.squeeze(-1)
+        # desc1 = desc1.squeeze(-1)
         
         b, m, _ = kpts0.shape
         b, n, _ = kpts1.shape

@@ -14,7 +14,8 @@ def exort_rknn(
     img_size = 512 , 
     top_nums = 20,
     platform = "rk3588", 
-    verbose=True
+    verbose=True,
+    do_quantization = False
     ):
     from rknn.api import RKNN
     rknn = RKNN(verbose=verbose)
@@ -40,7 +41,7 @@ def exort_rknn(
     
     # Build model
     print('--> Building model')
-    ret = rknn.build(do_quantization=False)
+    ret = rknn.build(do_quantization=do_quantization)
     if ret != 0:
         print('Build model failed!')
         exit(ret)
@@ -61,21 +62,25 @@ def exort_rknn(
 
    
 img_size = 512
-input_model_path = "/root/codes/rknn_model_export/LightGlue-ONNX/output/onnx/superpoint_lightglue.onnx"
-# input_model_path = "/root/codes/rknn_model_export/LightGlue-ONNX/output/onnx/superpoint_lightglue_end2end.onnx"
 # input_model_path = "/root/codes/rknn_model_export/LightGlue-ONNX/output/onnx/superpoint_simplified.onnx"
+# input_model_path = "/root/codes/rknn_model_export/LightGlue-ONNX/output/onnx/superpoint_lightglue_end2end_simplified.onnx"
+input_model_path = "/root/codes/rknn_model_export/LightGlue-ONNX/output/onnx/superpoint_lightglue_simplified.onnx"
 out_dir = "output/rknn"
-exp = "lightglue"
-top_nums = 256
+exp = "lightglue_simplified"
+top_nums = 512
 platform =  "rk3588"
+do_quantization = False
 # input_size_list=[[1, 3, img_size, img_size]]
-# input_size_list=[[1, 3, img_size, img_size],[1, 3, img_size, img_size]]
-input_size_list=[[1, top_nums, 2, 1],[1, top_nums, 2, 1],[1, top_nums, 256, 1],[1, top_nums, 256, 1]]
+# input_size_list=[[1, 1, img_size, img_size],[1, 1, img_size, img_size]]
+# input_size_list=[[1, top_nums, 2, 1],[1, top_nums, 2, 1],[1, top_nums, 256, 1],[1, top_nums, 256, 1]]
 # input_size_list=[[1, top_nums, 2],[1, top_nums, 2],[1, top_nums, 256],[1, top_nums, 256]]
-# input_size_list=None
+input_size_list=None
 # d_size_list= [[[1, top_nums, 2, 1],[1, top_nums, 2, 1],[1, top_nums, 256, 1],[1, top_nums, 256, 1]]]
 d_size_list= None
 
+
+if do_quantization:
+    exp += "quant"
 if __name__ == "__main__":
     exort_rknn(
         input_size_list = input_size_list,
@@ -86,5 +91,6 @@ if __name__ == "__main__":
         img_size =img_size,
         top_nums = top_nums,
         platform= platform,
-        verbose= True
+        verbose= False,
+        do_quantization = do_quantization
     )
